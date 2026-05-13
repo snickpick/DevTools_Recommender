@@ -1,6 +1,3 @@
-from os import terminal_size
-
-
 class DeveloperToolsPrompts: 
     """Prompts for analyzing developer tools and techniques"""
 

@@ -28,7 +28,7 @@ class CompanyInfo(BaseModel):
 class ResearchState(BaseModel):
     query: str
     extracted_tools: List[str] = []
-    companies: List[CompanyInfo]
+    companies: List[CompanyInfo] = []
     search_results: List[Dict[str, Any]] = []
     analysis: Optional[str] = None
 

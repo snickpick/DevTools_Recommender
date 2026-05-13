@@ -1,23 +1,39 @@
+import os
 from typing import Dict, Any
+from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage, SystemMessage, SystemMessageChunk
-from websockets import Response
+from langchain_core.messages import HumanMessage, SystemMessage 
 from .models import ResearchState, CompanyInfo, CompanyAnalysis
 from .firecrawl import FirecrawlService
 from .prompts import DeveloperToolsPrompts
 
+load_dotenv()
+
 class Workflow:
+
+    ############### Init ###############
     def __init__(self):
         self.firecrawl = FirecrawlService()
-        self.llm = ChatOpenAI(model="", temperature=0.1)
+        self.llm = ChatOpenAI(model="inclusionai/ring-2.6-1t:free", temperature=0.1, base_url="https://openrouter.ai/api/v1", api_key=os.getenv("OPENROUTER_API_KEY"))
         self.prompts = DeveloperToolsPrompts()
         self.workflow = self._build_workflow()
 
 
+    ############### Graph Builder ###############
     def _build_workflow(self):
-        pass
+        graph = StateGraph(ResearchState)
+        graph.add_node("extract_tools", self._extract_tools_step)
+        graph.add_node("research", self._research_step)
+        graph.add_node("analyze", self._analyze_step)
+        graph.set_entry_point("extract_tools")
+        graph.add_edge("extract_tools", "research")
+        graph.add_edge("research", "analyze")
+        graph.add_edge("analyze",END)
+        return graph.compile()
 
+
+    ############### Extraction ###############
     def _extract_tools_step(self, state: ResearchState) -> Dict[str, Any]:
         print(f"Finding articles about: {state.query}")
 
@@ -26,8 +42,8 @@ class Workflow:
 
         all_content = ""
         for result in search_results.data:
-            url = results.get("url", "")
-            scraped = self.firecrawl.scrape_comapany_pages(url)
+            url = result.get("url", "")
+            scraped = self.firecrawl.scrape_company_pages(url)
 
             if scraped:
                 all_content + scraped.markdown[:1500] + "\n\n"
@@ -35,7 +51,7 @@ class Workflow:
         
         messages = [
                 SystemMessage(content=self.prompts.TOOL_EXTRACTION_SYSTEM),
-                HumanMessage(content=self.prompts.tool_extraction_user(state.query), all_content)
+                HumanMessage(content=self.prompts.tool_extraction_user(state.query, all_content))
                 ]
 
         try:
@@ -52,6 +68,7 @@ class Workflow:
             return {"extracted_tools": []}
 
 
+    ############### Analysis Helper ###############
     def _analyze_company_content(self,  company_name: str, content:str) -> CompanyAnalysis:       
         structured_llm = self.llm.with_structured_output(CompanyAnalysis) 
 
@@ -72,9 +89,11 @@ class Workflow:
                     description="Failed",
                     api_available=None,
                     language_support=[],
-                    integration_capabilites=[],
+                    integration_capabilities=[],
             )
 
+
+    ############### Research ###############
     def _research_step(self, state: ResearchState) -> Dict[str, Any]:
         extracted_tools = getattr(state, "extracted_tools", [])
 
@@ -107,7 +126,7 @@ class Workflow:
                         competitors=[]
                 )
 
-                scraped = self.firecrawl.scrape_comapany_pages(url)
+                scraped = self.firecrawl.scrape_company_pages(url)
                 if scraped:
                     content = scraped.markdown
                     analysis = self._analyze_company_content(company.name, content)
@@ -115,10 +134,35 @@ class Workflow:
                     company.pricing_model = analysis.pricing_model
                     company.is_open_source = analysis.is_open_source
                     company.description = analysis.description
+                    company.tech_stack = analysis.tech_stack
                     company.api_available = analysis.api_available
                     company.language_support = analysis.language_support
-                    company.integration_capabilites = analysis.integration_capabilites
+                    company.integration_capabilities = analysis.integration_capabilities
 
                 companies.append(company)
 
-            return {"companies": companies}
+        return {"companies": companies}
+
+
+    ############### Analysis ###############
+    def _analyze_step(self, state: ResearchState) -> Dict[str, Any]:
+        print("Generating Recommendations")
+
+        company_data = ", ".join([
+                company.model_dump_json() for company in state.companies
+        ])
+
+        messages = [
+                SystemMessage(content=self.prompts.RECOMMENDATION_SYSTEM),
+                HumanMessage(content=self.prompts.recommendations_user(state.query, company_data))
+        ]
+
+        response = self.llm.invoke(messages)
+        return {"analysis": response.content}
+    
+    def run(self, query:str) -> ResearchState:
+        initial_state = ResearchState(query=query)
+        final_state = self.workflow.invoke(initial_state)
+        return ResearchState(**final_state)
+
+
