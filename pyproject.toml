@@ -1,5 +1,5 @@
 [project]
-name = "Developer Tools Recommender"
+name = "Developer_Tools_Recommender"
 version = "0.1.0"
 description = "Agent that recommends developer tools tailored to given scenario"
 readme = "README.md"
