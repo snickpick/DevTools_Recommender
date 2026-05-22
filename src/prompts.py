@@ -65,6 +65,3 @@ class DeveloperToolsPrompts:
 
                 Be concise and direct - no long explanations needed.
                 """
-
-        
-
